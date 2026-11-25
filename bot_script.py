@@ -6,7 +6,7 @@ import threading
 
 # --- إعدادات بوت التيليجرام ---
 TELEGRAM_TOKEN = "9032675094:AAGk8zSeWv9ewfztsAATj6_8utGZedynV44"
-CHAT_ID = "9032675094" # <--- ضع معرف محادثتك هنا (رقم)
+CHAT_ID = "7306346652" # <--- ضع معرف محادثتك هنا (رقم)
 
 # --- إعدادات الحساب ---
 EMAIL = "nvhjgvjj49@gmail.com" # <--- ضع إيميلك هنا
