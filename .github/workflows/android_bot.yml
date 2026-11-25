@@ -16,7 +16,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install uiautomator2 requests
+        run: pip install uiautomator2 requests pyTelegramBotAPI Pillow
 
       - name: Enable KVM
         run: |
