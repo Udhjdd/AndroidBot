@@ -1,115 +1,147 @@
-import uiautomator2 as u2
-import time
 import telebot
-import os
 import threading
+import time
+import http.server
+import socketserver
+import urllib.parse
+import requests
+from playwright.sync_api import sync_playwright
 
 # --- إعدادات بوت التيليجرام ---
 TELEGRAM_TOKEN = "9032675094:AAGk8zSeWv9ewfztsAATj6_8utGZedynV44"
 CHAT_ID = "7306346652" # <--- ضع معرف محادثتك هنا (رقم)
 
-# --- متغيرات لحفظ البيانات ---
-user_email = None
-user_password = None
-waiting_for_email = False
-waiting_for_password = False
-ready_to_start = False
+# --- إعدادات جوجل ---
+CLIENT_ID = "469058699729-6bh3d12qsj1775uni0tj7gtu7uld61iv.apps.googleusercontent.com"
+CLIENT_SECRET = "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"
+REDIRECT_URI = "http://localhost:8080"
+SCOPE = "https://www.googleapis.com/auth/games"
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
+auth_code = None
+
+# خادم وهمي لالتقاط الكود
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        global auth_code
+        if "/?code=" in self.path:
+            query = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(query)
+            if 'code' in params:
+                auth_code = params['code'][0]
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"Success! You can close this window.")
+
+def start_server():
+    with socketserver.TCPServer(("", 8080), Handler) as httpd:
+        httpd.handle_request() # ينتظر طلباً واحداً فقط
 
 @bot.message_handler(commands=['start'])
-def start(message):
-    global waiting_for_email
+def start_bot(message):
     bot.reply_to(message, "أهلاً بك سيدي! 🧛‍♂️\nأرسل إيميل جوجل الخاص بك:")
-    waiting_for_email = True
+    bot.register_next_step_handler(message, get_email)
 
-@bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    global waiting_for_email, waiting_for_password, user_email, user_password, ready_to_start
+user_credentials = {}
+
+def get_email(message):
+    chat_id = message.chat.id
+    user_credentials[chat_id] = {"email": message.text.strip()}
+    bot.reply_to(message, "تم استلام الإيميل. الآن أرسل كلمة المرور:")
+    bot.register_next_step_handler(message, get_password)
+
+def get_password(message):
+    chat_id = message.chat.id
+    user_credentials[chat_id]["password"] = message.text.strip()
+    bot.reply_to(message, "تم استلام البيانات. جاري تشغيل المتصفح وتسجيل الدخول...")
+    threading.Thread(target=login_and_get_token, args=(chat_id,)).start()
+
+def login_and_get_token(chat_id):
+    global auth_code
+    email = user_credentials[chat_id]["email"]
+    password = user_credentials[chat_id]["password"]
     
-    if waiting_for_email:
-        user_email = message.text.strip()
-        waiting_for_email = False
-        waiting_for_password = True
-        bot.reply_to(message, "تم استلام الإيميل. الآن أرسل كلمة المرور:")
-        
-    elif waiting_for_password:
-        user_password = message.text.strip()
-        waiting_for_password = False
-        bot.reply_to(message, "✅ تم استلام البيانات. جاري تشغيل الهاتف الوهمي...")
-        ready_to_start = True
-        
-    elif ready_to_start:
-        bot.reply_to(message, "البوت يعمل بالفعل... يرجى الانتظار.")
-
-def take_screenshot(d, filename="screen.png"):
+    bot.send_message(chat_id, "🚀 جاري فتح المتصفح...")
+    
     try:
-        d.screenshot(filename)
-        with open(filename, 'rb') as photo:
-            bot.send_photo(CHAT_ID, photo, caption=f"📸 الحالة الحالية")
-    except Exception as e:
-        print(f"فشل إرسال الصورة: {e}")
-
-def main():
-    global ready_to_start
-    print("في انتظار بيانات المستخدم...")
-    # الانتظار حتى يرسل المستخدم البيانات
-    while not ready_to_start:
-        time.sleep(1)
-        
-    print(f"بدء العمل باستخدام الإيميل: {user_email}")
-    try:
-        d = u2.connect("127.0.0.1:5555")
-        bot.send_message(CHAT_ID, "✅ تم الاتصال بالهاتف الوهمي بنجاح!")
-        
-        # فتح المتجر
-        bot.send_message(CHAT_ID, "جاري فتح Google Play Store...")
-        d.app_start("com.android.vending")
-        time.sleep(5)
-        take_screenshot(d, "play_store.png")
-        
-        # البحث عن Sign In
-        if d(text="SIGN IN").exists:
-            d(text="SIGN IN").click()
-            time.sleep(5)
-            take_screenshot(d, "sign_in_clicked.png")
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Linux; Android 13; Pixel 9 Pro XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                viewport={"width": 412, "height": 915},
+                is_mobile=True, has_touch=True
+            )
+            page = context.new_page()
             
-            if d(text="Google").exists:
-                d(text="Google").click()
-                time.sleep(5)
-                take_screenshot(d, "google_login.png")
+            # 1. تسجيل الدخول
+            page.goto("https://accounts.google.com/signin")
+            time.sleep(3)
+            page.locator('input[name="identifier"]').fill(email)
+            page.keyboard.press("Enter")
+            time.sleep(5)
+            page.locator('input[type="password"]').first.fill(password)
+            page.keyboard.press("Enter")
+            time.sleep(10)
+            
+            content = page.content()
+            if "2-Step Verification" in content or "Choose how you want to sign in" in content or "Tap Yes" in content:
+                bot.send_message(chat_id, "🔑 جوجل تطلب تحقق! افتح هاتفك واضغط على إشعار جوجل. (انتظر 40 ثانية)...")
+                time.sleep(40)
                 
-                if d(text="Email or phone").exists:
-                    d(text="Email or phone").set_text(user_email)
-                    d(text="Next").click()
-                    time.sleep(5)
-                    take_screenshot(d, "email_entered.png")
-                    
-                    if d(text="Enter your password").exists:
-                        d(text="Enter your password").set_text(user_password)
-                        d(text="Next").click()
-                        time.sleep(10)
-                        take_screenshot(d, "password_entered.png")
-                        
-                        bot.send_message(CHAT_ID, "📲 يرجى تأكيد الإشعار من هاتفك (انتظر 60 ثانية)...")
-                        time.sleep(60)
-                        take_screenshot(d, "after_verification.png")
-                        bot.send_message(CHAT_ID, "🎉 انتهى تسجيل الدخول.")
-                    else:
-                        bot.send_message(CHAT_ID, "⚠️ لم أجد خانة كلمة المرور.")
+            bot.send_message(chat_id, "✅ تم تجاوز الحماية. جاري طلب الصلاحيات...")
+            
+            # 2. طلب الصلاحيات
+            auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
+                "client_id": CLIENT_ID,
+                "redirect_uri": REDIRECT_URI,
+                "response_type": "code",
+                "scope": SCOPE,
+                "access_type": "offline",
+                "prompt": "consent"
+            })
+            
+            # تشغيل الخادم المحلي
+            threading.Thread(target=start_server).start()
+            time.sleep(1)
+            
+            page.goto(auth_url)
+            time.sleep(3)
+            
+            try:
+                page.locator('button:has-text("Continue")').first.click()
+            except: pass
+                
+            bot.send_message(chat_id, "⏳ في انتظار التقاط الكود من جوجل...")
+            
+            for _ in range(30):
+                if auth_code: break
+                time.sleep(1)
+                
+            if auth_code:
+                bot.send_message(chat_id, f"🎉 تم التقاط الكود بنجاح!\nجاري تحويله إلى توكن...")
+                
+                token_url = "https://oauth2.googleapis.com/token"
+                res = requests.post(token_url, data={
+                    "client_id": CLIENT_ID,
+                    "client_secret": CLIENT_SECRET,
+                    "code": auth_code,
+                    "redirect_uri": REDIRECT_URI,
+                    "grant_type": "authorization_code"
+                })
+                token_data = res.json()
+                
+                if 'refresh_token' in token_data:
+                    rt = token_data['refresh_token']
+                    bot.send_message(chat_id, f"✅ **نجاح ساحق!**\nهذا هو الـ Refresh Token:\n`{rt}`\n\nانسخه وضعه في السكربت التالي.")
                 else:
-                    bot.send_message(CHAT_ID, "⚠️ لم أجد خانة الإيميل.")
+                    bot.send_message(chat_id, f"⚠️ لم أجد refresh_token. الرد: {token_data}")
             else:
-                bot.send_message(CHAT_ID, "⚠️ لم أجد خيار Google.")
-        else:
-            bot.send_message(CHAT_ID, "⚠️ لم أجد زر SIGN IN.")
-
-        bot.send_message(CHAT_ID, "انتهى السكربت.")
-        
+                bot.send_message(chat_id, "❌ فشل التقاط الكود (انتهت المهلة).")
+                
+            browser.close()
+            
     except Exception as e:
-        bot.send_message(CHAT_ID, f"❌ خطأ: {e}")
+        bot.send_message(chat_id, f"❌ خطأ: {str(e)[:300]}")
 
-if __name__ == "__main__":
-    # تشغيل البوت في خلفية منفصلة
-    threading.Thread(target=bot.polling, kwargs={"none_stop": True}).start()
-    main()
+print("البوت يعمل... أرسل /start في تيليجرام لبدء العملية.")
+bot.polling(none_stop=True)
