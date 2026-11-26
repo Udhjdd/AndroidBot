@@ -1,10 +1,9 @@
-name: Android Bot
-
+name: Get OAuth Token
 on:
   workflow_dispatch:
 
 jobs:
-  run-android:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -16,36 +15,9 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install uiautomator2 requests pyTelegramBotAPI Pillow
+        run: |
+          pip install playwright requests pyTelegramBotAPI
+          playwright install chromium
 
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Install Android SDK & Emulator
-        run: |
-          export ANDROID_HOME=$HOME/android-sdk
-          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator
-          mkdir -p $ANDROID_HOME/cmdline-tools
-          cd $ANDROID_HOME/cmdline-tools
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
-          unzip -q commandlinetools-linux-9477386_latest.zip
-          mv cmdline-tools latest
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-30" "system-images;android-30;google_apis_playstore;x86_64"
-          echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd -n test -k "system-images;android-30;google_apis_playstore;x86_64" -d pixel_3a
-          mkdir -p ~/.android
-          adb keygen ~/.android/adbkey
-          
-      - name: Start Emulator
-        run: |
-          export ANDROID_HOME=$HOME/android-sdk
-          export PATH=$PATH:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools
-          $ANDROID_HOME/emulator/emulator -avd test -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect &
-          adb wait-for-device
-          while [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" != "1" ]; do sleep 2; done
-          
-      - name: Run Bot Script
+      - name: Run Bot
         run: python bot_script.py
